@@ -1,0 +1,49 @@
+<html xmlns:wicket="http://wicket.apache.org">
+  <head>
+    <title>Wicket WebSocket Demo</title>
+    <meta charset="UTF-8" />
+    <style>
+      .value-panel { 
+        font-size: 20px;
+        padding: 20px;
+        border: 1px solid #ccc;
+        margin: 20px;
+        border-radius: 5px;
+        background-color: #f8f9fa;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Wicket WebSocket Demo</h1>
+    <div wicket:id="valuePanel" class="value-panel">
+      Current value: <span wicket:id="wsMessage">Waiting for update</span>
+    </div>
+    <script>
+      function updateChart() {
+        // Placeholder for chart initialization
+        console.log("Chart initialized.");
+      }
+
+      function updateChartData(record) {
+        // Update your chart with 'record'
+        console.log("Chart updated with:", record);
+      }
+
+      Wicket.Event.subscribe("/websocket/open", function(jqEvent) {
+        console.log("WebSocket open – initializing chart.");
+        updateChart();
+      });
+
+      Wicket.Event.subscribe("/websocket/message", function(jqEvent, message) {
+        try {
+          var record = JSON.parse(message);
+          if (record && record.year) {
+            updateChartData(record);
+          }
+        } catch (e) {
+          console.log("Non-JSON message:", message);
+        }
+      });
+    </script>
+  </body>
+</html>
