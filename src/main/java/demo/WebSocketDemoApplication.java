@@ -20,13 +20,13 @@ public class WebSocketDemoApplication extends WebApplication {
         super.init();
         
         executor = Executors.newScheduledThreadPool(5);
-        // setRootRequestMapper(new HttpsMapper(getRootRequestMapper(), new HttpsConfig(8080, 8443)));
         
+        // Update page mappings
         mountPage("/", HomePage.class);
+        mountPage("/input", InputPage.class);
         
         WebSocketSettings webSocketSettings = WebSocketSettings.Holder.get(this);
         webSocketSettings.setPort(8080);
-        // webSocketSettings.setSecurePort(8443);
         
         // debugging
         getDebugSettings().setDevelopmentUtilitiesEnabled(true);

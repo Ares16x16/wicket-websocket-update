@@ -24,6 +24,7 @@ public class Updater {
         private final String applicationName;
         private final String sessionId;
         private final IKey key;
+        private int lastValue = -1;
 
         private UpdateTask(String applicationName, String sessionId, IKey key) {
             this.applicationName = applicationName;
@@ -44,10 +45,13 @@ public class Updater {
                     return;
                 }
 
-                int randomValue = RandomValueGenerator.generateValue();
-                String update = String.format("%d", randomValue);
-                System.out.println("Sending update: " + update);
-                connection.sendMessage(update);
+                int currentValue = DatabaseManager.getCurrentValue();
+                if (currentValue != lastValue) {
+                    String update = String.format("%d", currentValue);
+                    System.out.println("Sending update: " + update);
+                    connection.sendMessage(update);
+                    lastValue = currentValue;
+                }
             } catch (Exception e) {
                 System.out.println("Error in update task: " + e.getMessage());
                 e.printStackTrace();
