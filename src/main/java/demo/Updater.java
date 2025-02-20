@@ -4,6 +4,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.Iterator;
 import org.apache.wicket.Application;
 import org.apache.wicket.protocol.ws.WebSocketSettings;
 import org.apache.wicket.protocol.ws.api.IWebSocketConnection;
@@ -47,6 +48,28 @@ public class Updater {
         }
     }
 
+    // check active sessions for database pooling
+    public static boolean hasActiveSessions() {
+        return !activeSessions.isEmpty();
+    }
+
+    // clean up sessions with closed connections
+    public static void cleanupInactiveSessions() {
+        Iterator<Map.Entry<String, SessionInfo>> iterator = activeSessions.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<String, SessionInfo> entry = iterator.next();
+            SessionInfo info = entry.getValue();
+            Application application = Application.get(info.applicationName);
+            WebSocketSettings settings = WebSocketSettings.Holder.get(application);
+            IWebSocketConnectionRegistry registry = settings.getConnectionRegistry();
+            IWebSocketConnection conn = registry.getConnection(application, info.sessionId, info.key);
+            if (conn == null || !conn.isOpen()) {
+                System.out.println("Cleaning up inactive session: " + info.sessionId);
+                iterator.remove();
+            }
+        }
+    }
+
     private static class SessionInfo {
         final String applicationName;
         final String sessionId;
@@ -65,6 +88,9 @@ public class Updater {
 
         @Override
         public void run() {
+            // Clean up sessions with closed connections
+            cleanupInactiveSessions();
+			
             try {
                 int currentValue = DatabaseManager.getCurrentValue();
                 

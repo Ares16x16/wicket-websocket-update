@@ -50,6 +50,12 @@ public class DatabaseManager {
             int retryCount = 0;
             while (running) {
                 try {
+                    // Added check for active browser connections.
+                    if (!demo.Updater.hasActiveSessions()) {
+                        System.out.println("No active sessions, skipping database polling.");
+                        Thread.sleep(1000);
+                        continue;
+                    }
                     updateCurrentValue();
                     retryCount = 0; // Reset retry count on success
                     Thread.sleep(1000);
