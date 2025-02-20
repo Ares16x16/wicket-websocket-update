@@ -21,17 +21,9 @@ public class WebSocketDemoApplication extends WebApplication {
         
         executor = Executors.newScheduledThreadPool(5);
         
-        // Initialize and start DatabaseManager
-        try {
-            DatabaseManager.getInstance().start();
-        } catch (Exception e) {
-            System.err.println("Failed to initialize DatabaseManager: " + e.getMessage());
-            throw new RuntimeException("Application initialization failed", e);
-        }
-        
         // Update page mappings
         mountPage("/", HomePage.class);
-        mountPage("/input", InputPage.class);
+        mountPage("/simulate", SimulatePaymentPage.class);
         
         WebSocketSettings webSocketSettings = WebSocketSettings.Holder.get(this);
         webSocketSettings.setPort(8080);

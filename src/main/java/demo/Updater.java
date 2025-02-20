@@ -92,26 +92,20 @@ public class Updater {
             cleanupInactiveSessions();
 			
             try {
-                int currentValue = DatabaseManager.getCurrentValue();
-                
-                // Broadcast even if value hasn't changed, but not more than once per value
-                if (currentValue != lastBroadcastValue) {
-                    System.out.println("Broadcasting value update: " + currentValue);
-                    lastBroadcastValue = currentValue;
-                    
-                    activeSessions.forEach((sessionId, sessionInfo) -> {
-                        try {
-                            updateSession(sessionInfo, currentValue);
-                        } catch (Exception e) {
-                            System.err.println("Error updating session " + sessionId + ": " + e.getMessage());
-                            if (e.getMessage() != null && 
-                                (e.getMessage().contains("Connection is closed") || 
-                                 e.getMessage().contains("Connection closed"))) {
-                                removeSession(sessionId);
-                            }
+                activeSessions.forEach((sessionId, sessionInfo) -> {
+                    try {
+                        int currentValue = DatabaseManager.getInstance().getSessionValue(sessionId);
+                        updateSession(sessionInfo, currentValue);
+                    } catch (Exception e) {
+                        System.err.println("Error updating session " + sessionId + ": " + e.getMessage());
+                        // Naive check
+                        if (e.getMessage() != null && 
+                            (e.getMessage().contains("Connection is closed") || 
+                             e.getMessage().contains("Connection closed"))) {
+                            removeSession(sessionId);
                         }
-                    });
-                }
+                    }
+                });
             } catch (Exception e) {
                 System.err.println("Error in global update task: " + e.getMessage());
                 e.printStackTrace();

@@ -2,138 +2,100 @@ package demo;
 
 import javax.persistence.*;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 
 public class DatabaseManager {
-    private static final AtomicReference<DatabaseManager> INSTANCE = new AtomicReference<>();
-    private final AtomicInteger currentValue = new AtomicInteger(0);
+    private static final DatabaseManager instance = new DatabaseManager();
+    private final Map<String, AtomicInteger> sessionValues = new ConcurrentHashMap<>();
+    private final Map<String, Thread> pollingThreads = new ConcurrentHashMap<>();
     private volatile boolean running = true;
-    private final Thread pollingThread;
-    private static EntityManagerFactory emf;
-    private static final int MAX_RETRIES = 3;
-    private static final long RETRY_DELAY = 5000; // 5 seconds
 
-    private static synchronized EntityManagerFactory getEntityManagerFactory() {
-        if (emf == null) {
-            try {
-                // Ensure MySQL driver is loaded
-                Class.forName("com.mysql.cj.jdbc.Driver");
-                emf = Persistence.createEntityManagerFactory("demo");
-                // Test connection
-                EntityManager testEm = emf.createEntityManager();
-                testEm.close();
-            } catch (Exception e) {
-                System.err.println("Failed to initialize EntityManagerFactory: " + e.getMessage());
-                throw new RuntimeException("Database initialization failed", e);
-            }
+    static {
+        try {
+            Class.forName("com.mysql.cj.jdbc.Driver");
+        } catch (ClassNotFoundException e) {
+            throw new RuntimeException("Failed to load MySQL driver", e);
         }
-        return emf;
+    }
+
+    private static final EntityManagerFactory emf = Persistence.createEntityManagerFactory("demo");
+
+    private DatabaseManager() {
+        // No global polling thread needed
     }
 
     public static DatabaseManager getInstance() {
-        DatabaseManager instance = INSTANCE.get();
-        if (instance == null) {
-            synchronized (DatabaseManager.class) {
-                instance = INSTANCE.get();
-                if (instance == null) {
-                    instance = new DatabaseManager();
-                    INSTANCE.set(instance);
-                }
-            }
-        }
         return instance;
     }
 
-    private DatabaseManager() {
-        pollingThread = new Thread(() -> {
-            int retryCount = 0;
+    public void startSessionPolling(String sessionId) {
+        AtomicInteger sessionValue = new AtomicInteger(0);
+        sessionValues.put(sessionId, sessionValue);
+
+        Thread pollingThread = new Thread(() -> {
             while (running) {
+                updateSessionValue(sessionId, sessionValue);
                 try {
-                    // Added check for active browser connections.
-                    if (!demo.Updater.hasActiveSessions()) {
-                        System.out.println("No active sessions, skipping database polling.");
-                        Thread.sleep(1000);
-                        continue;
-                    }
-                    updateCurrentValue();
-                    retryCount = 0; // Reset retry count on success
                     Thread.sleep(1000);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     break;
-                } catch (Exception e) {
-                    System.err.println("Error in polling thread: " + e.getMessage());
-                    retryCount++;
-                    if (retryCount >= MAX_RETRIES) {
-                        System.err.println("Max retries reached, stopping polling thread");
-                        running = false;
-                        break;
-                    }
-                    try {
-                        Thread.sleep(RETRY_DELAY);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        break;
-                    }
                 }
             }
-        }, "DB-Polling-Thread");
+        }, "DB-Polling-Thread-" + sessionId);
         pollingThread.setDaemon(true);
+        pollingThread.start();
+        pollingThreads.put(sessionId, pollingThread);
     }
 
-    public void start() {
-        if (!pollingThread.isAlive()) {
-            running = true;
-            pollingThread.start();
-        }
-    }
-
-    private void updateCurrentValue() {
-        EntityManager em = getEntityManagerFactory().createEntityManager();
+    private void updateSessionValue(String sessionId, AtomicInteger sessionValue) {
+        EntityManager em = emf.createEntityManager();
         try {
-            TypedQuery<ValueEntity> query = em.createQuery(
-                "SELECT v FROM ValueEntity v ORDER BY v.id DESC", ValueEntity.class);
+            TypedQuery<PaymentSession> query = em.createQuery(
+                "SELECT p FROM PaymentSession p WHERE p.sessionId = :sessionId ORDER BY p.id DESC", PaymentSession.class);
+            query.setParameter("sessionId", sessionId);
             query.setMaxResults(1);
-            List<ValueEntity> results = query.getResultList();
+            List<PaymentSession> results = query.getResultList();
             if (!results.isEmpty()) {
-                int newValue = results.get(0).getValue();
-                int oldValue = currentValue.get();
-                if (newValue != oldValue) {
-                    System.out.println("Database value updated from " + oldValue + " to " + newValue);
-                    currentValue.set(newValue);
-                }
+                sessionValue.set(results.get(0).getValue());
             }
         } finally {
             em.close();
         }
     }
 
-    public static int getCurrentValue() {
-        return getInstance().currentValue.get();
+    public int getSessionValue(String sessionId) {
+        AtomicInteger sessionValue = sessionValues.get(sessionId);
+        return sessionValue != null ? sessionValue.get() : 0;
     }
 
-    public static void addNewValue(int value) {
-        EntityManager em = getEntityManagerFactory().createEntityManager();
+    public void addNewSessionValue(String sessionId, int value) {
+        EntityManager em = emf.createEntityManager();
         try {
             em.getTransaction().begin();
-            ValueEntity entity = new ValueEntity();
+            PaymentSession entity = new PaymentSession();
+            entity.setSessionId(sessionId);
             entity.setValue(value);
+            entity.setStatus("pending");
             em.persist(entity);
             em.getTransaction().commit();
-        } catch (Exception e) {
-            System.err.println("Error adding new value: " + e.getMessage());
-            throw e;
         } finally {
             em.close();
         }
+    }
+
+    public void stopSessionPolling(String sessionId) {
+        Thread pollingThread = pollingThreads.remove(sessionId);
+        if (pollingThread != null) {
+            pollingThread.interrupt();
+        }
+        sessionValues.remove(sessionId);
     }
 
     public void shutdown() {
         running = false;
-        pollingThread.interrupt();
-        if (emf != null && emf.isOpen()) {
-            emf.close();
-        }
+        pollingThreads.values().forEach(Thread::interrupt);
     }
 }
