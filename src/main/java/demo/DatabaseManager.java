@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.TimeUnit;
 
 public class DatabaseManager {
     private static final DatabaseManager instance = new DatabaseManager();
@@ -35,8 +36,15 @@ public class DatabaseManager {
         sessionValues.put(sessionId, sessionValue);
 
         Thread pollingThread = new Thread(() -> {
+            long startTime = System.currentTimeMillis();
             while (running) {
                 updateSessionValue(sessionId, sessionValue);
+                if (System.currentTimeMillis() - startTime > TimeUnit.MINUTES.toMillis(5)) {
+                    System.out.println("Session " + sessionId + " timed out.");
+                    updateSessionValue(sessionId, -1); // -1 indicates timeout
+                    stopSessionPolling(sessionId);
+                    break;
+                }
                 try {
                     Thread.sleep(1000);
                 } catch (InterruptedException e) {
@@ -71,15 +79,44 @@ public class DatabaseManager {
         return sessionValue != null ? sessionValue.get() : 0;
     }
 
-    public void addNewSessionValue(String sessionId, int value) {
+    public void updateSessionValue(String sessionId, int value) {
         EntityManager em = emf.createEntityManager();
         try {
             em.getTransaction().begin();
-            PaymentSession entity = new PaymentSession();
-            entity.setSessionId(sessionId);
-            entity.setValue(value);
-            entity.setStatus("pending");
-            em.persist(entity);
+            PaymentSession entity = em.createQuery("SELECT p FROM PaymentSession p WHERE p.sessionId = :sessionId", PaymentSession.class)
+                                      .setParameter("sessionId", sessionId)
+                                      .getSingleResult();
+            if (!"success".equals(entity.getStatus()) && value != -1) {
+                entity.setValue(value);
+                if (value == 1) {
+                    entity.setStatus("success");
+                }
+                em.merge(entity);
+            } else if (value == -1) {
+                entity.setValue(value);
+                entity.setStatus("timeout");
+                em.merge(entity);
+            }
+            em.getTransaction().commit();
+        } finally {
+            em.close();
+        }
+    }
+
+    public void createNewSessionRecord(String sessionId) {
+        EntityManager em = emf.createEntityManager();
+        try {
+            em.getTransaction().begin();
+            TypedQuery<PaymentSession> query = em.createQuery("SELECT p FROM PaymentSession p WHERE p.sessionId = :sessionId", PaymentSession.class);
+            query.setParameter("sessionId", sessionId);
+            List<PaymentSession> results = query.getResultList();
+            if (results.isEmpty()) {
+                PaymentSession entity = new PaymentSession();
+                entity.setSessionId(sessionId);
+                entity.setValue(0);
+                entity.setStatus("pending");
+                em.persist(entity);
+            }
             em.getTransaction().commit();
         } finally {
             em.close();

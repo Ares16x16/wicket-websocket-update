@@ -84,8 +84,6 @@ public class Updater {
     }
 
     private static class GlobalUpdateTask implements Runnable {
-        private int lastBroadcastValue = -1;
-
         @Override
         public void run() {
             // Clean up sessions with closed connections
@@ -95,7 +93,16 @@ public class Updater {
                 activeSessions.forEach((sessionId, sessionInfo) -> {
                     try {
                         int currentValue = DatabaseManager.getInstance().getSessionValue(sessionId);
-                        updateSession(sessionInfo, currentValue);
+                        if (currentValue != sessionInfo.lastValue) {
+                            String message = currentValue == 1 ? "Payment Successful" : "Please scan the QR code to pay";
+                            updateSession(sessionInfo, message);
+                            sessionInfo.lastValue = currentValue;
+                            if (currentValue == 1) {
+                                DatabaseManager.getInstance().stopSessionPolling(sessionId);
+                                // Remove session so no further updates are sent
+                                removeSession(sessionId);
+                            }
+                        }
                     } catch (Exception e) {
                         System.err.println("Error updating session " + sessionId + ": " + e.getMessage());
                         // Naive check
@@ -112,7 +119,7 @@ public class Updater {
             }
         }
 
-        private void updateSession(SessionInfo sessionInfo, int currentValue) {
+        private void updateSession(SessionInfo sessionInfo, String message) {
             try {
                 Application application = Application.get(sessionInfo.applicationName);
                 WebSocketSettings settings = WebSocketSettings.Holder.get(application);
@@ -120,10 +127,8 @@ public class Updater {
                 IWebSocketConnection connection = registry.getConnection(application, sessionInfo.sessionId, sessionInfo.key);
 
                 if (connection != null && connection.isOpen()) {
-                    String update = String.format("%d", currentValue);
-                    connection.sendMessage(update);
-                    sessionInfo.lastValue = currentValue;
-                    System.out.println("Sent update " + update + " to session " + sessionInfo.sessionId);
+                    connection.sendMessage(message);
+                    System.out.println("Sent update '" + message + "' to session " + sessionInfo.sessionId);
                 } else {
                     throw new RuntimeException("Connection is closed for session: " + sessionInfo.sessionId);
                 }

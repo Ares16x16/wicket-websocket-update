@@ -4,9 +4,7 @@ import org.apache.wicket.markup.html.WebPage;
 import org.apache.wicket.markup.html.form.Button;
 import org.apache.wicket.markup.html.form.Form;
 import org.apache.wicket.markup.html.panel.FeedbackPanel;
-import org.apache.wicket.protocol.ws.api.WebSocketBehavior;
-import org.apache.wicket.protocol.ws.api.message.TextMessage;
-import org.apache.wicket.protocol.ws.api.WebSocketRequestHandler;
+import org.apache.wicket.model.Model;
 
 public class SimulatePaymentPage extends WebPage {
     private static final long serialVersionUID = 1L;
@@ -21,20 +19,15 @@ public class SimulatePaymentPage extends WebPage {
             @Override
             public void onSubmit() {
                 super.onSubmit();
-                sendMessageToWebSocket("1");
+                simulatePayment();
             }
         };
         form.add(simulateButton);
     }
 
-    private void sendMessageToWebSocket(String message) {
-        add(new WebSocketBehavior() {
-            private static final long serialVersionUID = 1L;
-
-            @Override
-            protected void onMessage(WebSocketRequestHandler handler, TextMessage message) {
-                handler.push((CharSequence) message);
-            }
-        });
+    private void simulatePayment() {
+        String sessionId = getSession().getId();
+        DatabaseManager.getInstance().updateSessionValue(sessionId, 1);
+        info("Payment simulation successful for session: " + sessionId);
     }
 }

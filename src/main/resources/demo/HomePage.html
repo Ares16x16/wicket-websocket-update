@@ -15,13 +15,18 @@
         font-weight: bold;
         color: #0066cc;
       }
+      .counter {
+        font-size: 16px;
+        color: #ff0000;
+      }
     </style>
   </head>
-  <body>
+  <body>  
     <h1>Display Page</h1>
     <div wicket:id="valuePanel" class="value-panel">
       <div wicket:id="qrCode"></div>
       <span wicket:id="wsMessage" class="wsMessage">Waiting for update</span>
+      <div id="counter" wicket:id="counter" class="counter">05:00</div>
     </div>
     <script>
       Wicket.Event.subscribe("/websocket/open", function() {
@@ -30,7 +35,11 @@
 
       Wicket.Event.subscribe("/websocket/message", function(jqEvent, message) {
         console.log("WebSocket message received:", message);
-        document.querySelector('[wicket\\:id="wsMessage"]').innerHTML = message;
+        if (message.startsWith('TIMER:')) {
+          document.querySelector('[wicket\\:id="counter"]').innerHTML = message.substring(6);
+        } else {
+          document.querySelector('[wicket\\:id="wsMessage"]').innerHTML = message;
+        }
       });
     </script>
   </body>
