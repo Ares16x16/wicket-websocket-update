@@ -21,6 +21,14 @@ public class WebSocketDemoApplication extends WebApplication {
         
         executor = Executors.newScheduledThreadPool(5);
         
+        // Initialize and start DatabaseManager
+        try {
+            DatabaseManager.getInstance().start();
+        } catch (Exception e) {
+            System.err.println("Failed to initialize DatabaseManager: " + e.getMessage());
+            throw new RuntimeException("Application initialization failed", e);
+        }
+        
         // Update page mappings
         mountPage("/", HomePage.class);
         mountPage("/input", InputPage.class);
@@ -41,6 +49,7 @@ public class WebSocketDemoApplication extends WebApplication {
 
     @Override
     protected void onDestroy() {
+        DatabaseManager.getInstance().shutdown();
         executor.shutdownNow();
         super.onDestroy();
     }
