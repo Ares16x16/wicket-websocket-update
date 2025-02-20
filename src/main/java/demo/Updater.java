@@ -74,7 +74,7 @@ public class Updater {
         final String applicationName;
         final String sessionId;
         final IKey key;
-        int lastValue = -1;
+        String lastStatus = "pending";
 
         SessionInfo(String applicationName, String sessionId, IKey key) {
             this.applicationName = applicationName;
@@ -92,12 +92,22 @@ public class Updater {
             try {
                 activeSessions.forEach((sessionId, sessionInfo) -> {
                     try {
-                        int currentValue = DatabaseManager.getInstance().getSessionValue(sessionId);
-                        if (currentValue != sessionInfo.lastValue) {
-                            String message = currentValue == 1 ? "Payment Successful" : "Please scan the QR code to pay";
+                        String status = DatabaseManager.getInstance().getSessionStatus(sessionId);
+                        System.out.println("Session " + sessionId + " - Status: " + status);
+                        if (!status.equals(sessionInfo.lastStatus)) {
+                            String message;
+                            if ("timeout".equals(status)) {
+                                message = "Session timed out";
+                            } else if ("pending".equals(status)) {
+                                message = "Please scan the QR code to pay";
+                            } else if ("success".equals(status)) {
+                                message = "Payment Successful";
+                            } else {
+                                message = "Error";
+                            }
                             updateSession(sessionInfo, message);
-                            sessionInfo.lastValue = currentValue;
-                            if (currentValue == 1) {
+                            sessionInfo.lastStatus = status;
+                            if ("success".equals(status)) {
                                 DatabaseManager.getInstance().stopSessionPolling(sessionId);
                                 // Remove session so no further updates are sent
                                 removeSession(sessionId);

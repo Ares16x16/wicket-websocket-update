@@ -6,11 +6,14 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.TimeUnit;
+import java.util.HashSet;
+import java.util.Set;
 
 public class DatabaseManager {
     private static final DatabaseManager instance = new DatabaseManager();
     private final Map<String, AtomicInteger> sessionValues = new ConcurrentHashMap<>();
     private final Map<String, Thread> pollingThreads = new ConcurrentHashMap<>();
+    private final Set<String> activeSessions = new HashSet<>();
     private volatile boolean running = true;
 
     static {
@@ -32,6 +35,21 @@ public class DatabaseManager {
     }
 
     public void startSessionPolling(String sessionId) {
+        synchronized (activeSessions) {
+            if (activeSessions.contains(sessionId)) {
+                return; // Session is already being polled
+            }
+        }
+
+        // Check if the session has already timed out
+        if (isSessionTimedOut(sessionId)) {
+            return; // Do not start polling if the session has timed out
+        }
+
+        synchronized (activeSessions) {
+            activeSessions.add(sessionId);
+        }
+
         AtomicInteger sessionValue = new AtomicInteger(0);
         sessionValues.put(sessionId, sessionValue);
 
@@ -58,6 +76,18 @@ public class DatabaseManager {
         pollingThreads.put(sessionId, pollingThread);
     }
 
+    private boolean isSessionTimedOut(String sessionId) {
+        EntityManager em = emf.createEntityManager();
+        try {
+            PaymentSession entity = em.createQuery("SELECT p FROM PaymentSession p WHERE p.sessionId = :sessionId", PaymentSession.class)
+                                      .setParameter("sessionId", sessionId)
+                                      .getSingleResult();
+            return "timeout".equals(entity.getStatus());
+        } finally {
+            em.close();
+        }
+    }
+
     private void updateSessionValue(String sessionId, AtomicInteger sessionValue) {
         EntityManager em = emf.createEntityManager();
         try {
@@ -81,23 +111,64 @@ public class DatabaseManager {
 
     public void updateSessionValue(String sessionId, int value) {
         EntityManager em = emf.createEntityManager();
+        EntityTransaction tx = em.getTransaction();
         try {
-            em.getTransaction().begin();
-            PaymentSession entity = em.createQuery("SELECT p FROM PaymentSession p WHERE p.sessionId = :sessionId", PaymentSession.class)
-                                      .setParameter("sessionId", sessionId)
-                                      .getSingleResult();
-            if (!"success".equals(entity.getStatus()) && value != -1) {
-                entity.setValue(value);
-                if (value == 1) {
-                    entity.setStatus("success");
-                }
-                em.merge(entity);
-            } else if (value == -1) {
-                entity.setValue(value);
-                entity.setStatus("timeout");
-                em.merge(entity);
+            tx.begin();
+            // Use getResultList() to avoid exception if no record is found.
+            List<PaymentSession> results = em.createQuery("SELECT p FROM PaymentSession p WHERE p.sessionId = :sessionId", PaymentSession.class)
+                                          .setParameter("sessionId", sessionId)
+                                          .getResultList();
+            if (results.isEmpty()) {
+                System.err.println("No PaymentSession found for sessionId: " + sessionId);
+                tx.rollback();
+                return;
             }
-            em.getTransaction().commit();
+            PaymentSession entity = results.get(0);
+            entity.setValue(value);
+            if (value == 1) {
+                entity.setStatus("success");
+            } else if (value == -1) {
+                entity.setStatus("timeout");
+            }
+            tx.commit();
+            // Update our local cache
+            AtomicInteger atomicValue = sessionValues.get(sessionId);
+            if (atomicValue != null) {
+                atomicValue.set(value);
+            }
+        } catch (Exception e) {
+            if (tx.isActive()) {
+                tx.rollback();
+            }
+            e.printStackTrace();
+        } finally {
+            em.close();
+        }
+    }
+
+    public void updateSessionValueDirect(String sessionId, int value) {
+        EntityManager em = emf.createEntityManager();
+        EntityTransaction tx = em.getTransaction();
+        try {
+            tx.begin();
+            String status = (value == 1) ? "success" : (value == -1 ? "timeout" : "pending");
+            int updated = em.createQuery("UPDATE PaymentSession p SET p.value = :value, p.status = :status WHERE p.sessionId = :sessionId")
+                            .setParameter("value", value)
+                            .setParameter("status", status)
+                            .setParameter("sessionId", sessionId)
+                            .executeUpdate();
+            tx.commit();
+            
+            AtomicInteger atomicValue = sessionValues.get(sessionId);
+            if (atomicValue != null) {
+                atomicValue.set(value);
+            }
+            System.out.println("Updated session " + sessionId + " with value " + value + ". Rows updated: " + updated);
+        } catch (Exception e) {
+            if (tx.isActive()) {
+                tx.rollback();
+            }
+            e.printStackTrace();
         } finally {
             em.close();
         }
@@ -129,10 +200,49 @@ public class DatabaseManager {
             pollingThread.interrupt();
         }
         sessionValues.remove(sessionId);
+        synchronized (activeSessions) {
+            activeSessions.remove(sessionId);
+        }
     }
 
     public void shutdown() {
         running = false;
         pollingThreads.values().forEach(Thread::interrupt);
+    }
+
+    public String getSessionStatus(String sessionId) {
+        EntityManager em = emf.createEntityManager();
+        try {
+            PaymentSession entity = em.createQuery("SELECT p FROM PaymentSession p WHERE p.sessionId = :sessionId", PaymentSession.class)
+                                      .setParameter("sessionId", sessionId)
+                                      .getSingleResult();
+            return entity.getStatus();
+        } finally {
+            em.close();
+        }
+    }
+
+    public void updateSessionStatus(String sessionId, String status) {
+        EntityManager em = emf.createEntityManager();
+        EntityTransaction tx = em.getTransaction();
+        try {
+            tx.begin();
+            List<PaymentSession> results = em.createQuery("SELECT p FROM PaymentSession p WHERE p.sessionId = :sessionId", PaymentSession.class)
+                .setParameter("sessionId", sessionId)
+                .getResultList();
+            if (results.isEmpty()) {
+                System.err.println("No PaymentSession found for sessionId: " + sessionId);
+                tx.rollback();
+                return;
+            }
+            PaymentSession entity = results.get(0);
+            entity.setStatus(status);
+            tx.commit();
+        } catch (Exception e) {
+            if (tx.isActive()) tx.rollback();
+            e.printStackTrace();
+        } finally {
+            em.close();
+        }
     }
 }

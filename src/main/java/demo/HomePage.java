@@ -13,6 +13,7 @@ import org.apache.wicket.protocol.ws.api.message.TextMessage;
 import org.apache.wicket.protocol.ws.api.WebSocketRequestHandler;
 import org.apache.wicket.protocol.ws.api.message.ClosedMessage;
 import org.apache.wicket.util.time.Duration;
+import org.hibernate.boot.model.relational.Database;
 
 public class HomePage extends WebPage {
     private static final long serialVersionUID = 1L;
@@ -21,7 +22,7 @@ public class HomePage extends WebPage {
     private final Label qrCode;
     private final Label counterLabel;
     private String currentSessionId;
-    private int totalTime = 300; // 5 minutes
+    private int totalTime = 10; // seconds
     // Store timer behavior to stop it
     private AbstractAjaxTimerBehavior timerBehavior;
 
@@ -47,7 +48,7 @@ public class HomePage extends WebPage {
         int remaining = Math.max(totalTime - elapsed, 0);
         counterLabel = new Label("counter", Model.of(formatTime(remaining)));
         counterLabel.setOutputMarkupId(true);
-        counterLabel.setOutputMarkupPlaceholderTag(true); // Add this line
+        counterLabel.setOutputMarkupPlaceholderTag(true);
     }
 
     @Override
@@ -67,8 +68,21 @@ public class HomePage extends WebPage {
                 int remaining = Math.max(totalTime - elapsed, 0);
                 counterLabel.setDefaultModelObject(formatTime(remaining));
                 target.add(counterLabel);
-                if (remaining == 0) {
-                    DatabaseManager.getInstance().updateSessionValue(currentSessionId, -1);
+
+                // Use the WebSocket-assigned sessionId instead of getSession().getId()
+                String sessionId = currentSessionId;
+                if (sessionId == null) {
+                    return;
+                }
+                String status = DatabaseManager.getInstance().getSessionStatus(sessionId);
+                if ("success".equals(status)) {
+                    counterLabel.setDefaultModelObject("--:--");
+                    stop(target);
+                } else if (remaining <= 0) {
+                    wsMessage.setDefaultModelObject("Session timed out");
+                    target.add(wsMessage);
+                    DatabaseManager.getInstance().updateSessionStatus(sessionId, "timeout");
+                    DatabaseManager.getInstance().stopSessionPolling(sessionId);
                     stop(target);
                 }
             }
@@ -106,7 +120,7 @@ public class HomePage extends WebPage {
                         wsMessage.setDefaultModelObject("Session timed out");
                         DatabaseManager.getInstance().stopSessionPolling(currentSessionId);
                     } else {
-                        wsMessage.setDefaultModelObject("Please scan the QR code to pay");
+                        wsMessage.setDefaultModelObject("Unknown");
                     }
                     handler.add(wsMessage);
                 } catch (Exception ex) {
@@ -122,6 +136,14 @@ public class HomePage extends WebPage {
         });
     }
 
+    private void stopTimer(AjaxRequestTarget target) {
+        if (timerBehavior != null) {
+            timerBehavior.stop(target);
+            counterLabel.setDefaultModelObject("00:00");
+            target.add(counterLabel);
+        }
+    }
+
     private String formatTime(int seconds) {
         int minutes = seconds / 60;
         int remSeconds = seconds % 60;
@@ -129,6 +151,6 @@ public class HomePage extends WebPage {
     }
 
     private void updatePaymentStatus(String sessionId, String status) {
-        DatabaseManager.getInstance().updateSessionValue(sessionId, 1);
+        DatabaseManager.getInstance().updateSessionStatus(sessionId, "success");
     }
 }
